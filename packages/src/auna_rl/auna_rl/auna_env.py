@@ -140,7 +140,7 @@ class aunaEnvironment(robotController, Env):
     def close(self): pass
     
     def check_obstacle_proximity(self, laser_readings):
-        """Check if any obstacles are too close based on laser readings."""
+        #Check if any obstacles are too close based on laser readings.
         for distance in laser_readings:
             if distance < self._minimum_distance_from_obstacles:
                 return True
