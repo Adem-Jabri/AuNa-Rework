@@ -1,6 +1,7 @@
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data
 import numpy as np
 import rclpy
@@ -10,10 +11,20 @@ class robotController(Node):
         super().__init__('robot_controller')
         self.num_lidar_sections = 10
         self.readings = []
+        self.actual_position = Odometry()
         # publish Actions to control the velocity of the robot
         self.action_publisher = self.create_publisher(Twist, 'robot/cmd_vel', 10)
         # subscribe to position and Lidar readings, to know the state of the robot
-        self.lidar_subscriber = self.create_subscription(LaserScan, 'robot/scan', self.sub_lidar_callback, qos_profile=qos_profile_sensor_data)
+        self.lidar_subscriber = self.create_subscription(
+            LaserScan, 
+            'robot/scan', 
+            self.sub_lidar_callback, 
+            qos_profile=qos_profile_sensor_data)
+        self.subscription = self.create_subscription(
+            Odometry,
+            'robot/odom',
+            self.sub_odom_callback,
+            10)
     
     def send_vel(self, linear, angular):
         print(f"Sending velocity - Linear: {linear}, Angular: {angular}")
@@ -36,7 +47,11 @@ class robotController(Node):
             end_index = min(end_index, len(self.readings))
             self.min_per_section.append(min(self.readings[start_index:end_index]))
         self.readings = self.min_per_section
-        self.received = True 
+        self.readings_received = True 
+
+    def sub_odom_callback(self, msg):
+        self.actual_position = msg.pose.pose.position
+        self.odom_received = True
 def main(args = None):
         rclpy.init()
 
@@ -46,3 +61,4 @@ def main(args = None):
         
 if __name__=="__main__": 
         main()    
+

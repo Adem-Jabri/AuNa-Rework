@@ -22,32 +22,44 @@ class aunaEnvironment(robotController, Env):
         
         # initialize the robot parameters: start position, target position
         self._target_locations = [
-            #(9.626048021284198, 0.9948578832933341, 0.009999696821740872),  # Ecke 1
-            #(9.626048021284198, 0.9948578832933341, 0.009999696821740872),  # Ecke 2
-            (-0.3, -0.3, 0.009999696821740872),  # Ecke 3
-            #(-1.9054505190339759, 12.31810289360229, 0.009999582055632297),  # Ecke 4
-            #(2.8681651239680486, 11.467601836868635, 0.009999680398369362),  # Ecke 5
-            #(4.233035419730203, 5.517313709660946, 0.009999545338471208),    # Point 6 (Mitte Halbkreis)
-            #(-1.5898110268184236, 4.662859418442022, 0.009999649799570381),  # Point 7 (Anfang Gerade)
-            #(-12.35910483131254, 14.657580958662619, 0.009999443490755253),  # Point 8 (Ende Gerade)
-            #(-17.934198543818844, 13.879836779953955, 0.009995890946504368), # Point 9 (Ende zweite Halbes Kreis)
-            (-14.657546342770011, 1.0, 0.00999940416938419)   # Point 10 (Letzte Ecke)
+            (0, -0.35, 0),              # Point 1  
+            (11.2, 2.4, 0.01),          # corner 2  
+            (10.2, 14.6, 0.01),         # corner 3   
+            (-0.68, 15.66, 0.01),       # corner 4  
+            (-2.2, 12.318, 0.01),       # corner 5  
+            (4.233, 5.517, 0.01),       # Point 6 (Middle of the semicircle)  
+            (-3, 5.3, 0.01),            # Point 7 (Start of the straight line)  
+            (-12.359, 14.657, 0.01),    # Point 8 (End of the straight line)   
+            (-18.1, 13.879, 0.01),      # Point 9 (End of the second semicircle)
+            (-14.657, 1.2, 0.01)        # Point 10 (Last Corner)
         ]
         self._agent_locations = self._target_locations.copy()
+        
+         # Possible orientations (x, y, z, w). For each position it will be 2 orientations 
+        self.orientations = [
+            ((0, 0, 1, 0), (0, 0, 0, 1)),  
+            ((0, 0, 1, 1.7), (0, 0, 1, -0.5)),
+            ((0, 0, 1, 0.4), (0, 0, 1, -2)),
+            ((0, 0, 1, 0), (0, 0, 0, 1)),
+            ((0, 0, 1, -1.9), (0, 0, 1, 1)),
+            ((0, 0, 1, -0.5), (0, 0, 1, 2)),
+            ((0, 0, 1, 0.35), (0, 0, 1, -2.2)),
+            ((0, 0, 1, 0.35), (0, 0, 1, -2.2)),
+            ((0, 0, 1, -0.75), (0, 0, 1, 1.4)),
+            ((0, 0, 1, -5), (0, 0, 1, 0.25)),
+        ]
 
         self._minimum_distance_from_obstacles = 0.25
-        self._minimum_distance_from_target = 0.2
-         # Possible orientations (x, y, z, w)
-        self.orientations = [
-            (0.0, 0.0, 1.0, 0.0),  # 180 degree rotation around Z-axis
-            (0.0, 0.0, 0.0, 1.0),  # No rotation
-        ]
-        
+        self._minimum_distance_from_target = 0.
+        self._best_distance_from_obstacles = 0.5
+        self.remaining_waypoints = []
+        self.original_distance_to_target = 0
+        self.info_received = False
         self.create_ros_clients()
 
         all_locations = np.array(self._target_locations)
-        min_bounds = np.min(all_locations, axis=0)
-        max_bounds = np.max(all_locations, axis=0)
+        min_bounds = np.min(all_locations, axis=0) 
+        max_bounds = np.max(all_locations, axis=0) + 0.001
         
         self.action_space = spaces.Discrete(3)
         """
@@ -80,24 +92,41 @@ class aunaEnvironment(robotController, Env):
         #)
         
         observation = self._get_obs()
-        info = self._get_info()
+        info = self._get_info(False)
+        
+        while self.info_received == False:
+            rclpy.spin_once(self)
+
+        #print (f"+++++++++++++++{self.x}++++++++++{self._target_location}++++++++++++++++++{self.actual_position}")
+        #print (f"---------------{self.remaining_waypoints}-----------------------")
+        #print(f"+++++++++++++++++{info}+++++++++++++++++++++")
         
         # reward calculation
-        if (info["distance"] < self._minimum_distance_from_target):
-            # If the agent reached the target it gets a positive reward
-            reward = 1
-            terminated = True
-            self.get_logger().info("The target is reached")
-        elif (self.check_obstacle_proximity(info["laser"])):
-            # If the agent hits an obstacle it gets a negative reward
-            reward = -1
+        progress_reward = self.original_distance_to_target - info["distance"]
+        
+        collision_penalty = -50 if (self.check_obstacle_proximity(info["laser"])) else 0
+        if (collision_penalty < 0) : 
             terminated = True
             self.get_logger().info("The robot hits an obstacle")
-        else:
-            # Otherwise the episode continues
-            buff = info["laser"]
-            print(f"readings: {buff}")
-            reward = 0
+        
+        time_penalty = -0.1
+
+        target_reached_reward = 100 if (info["distance"] < self._minimum_distance_from_target) else 0
+        if (target_reached_reward > 0) : 
+            terminated = True
+            self.get_logger().info("The target is reached")
+        
+        closest_waypoint_reached_reward = 10 if (self.check_waypoint_reached == True) else 0
+        if (closest_waypoint_reached_reward > 0) : 
+            if (len(self.remaining_waypoints) >= 1):
+                print (self.remaining_waypoints)
+                self.remaining_waypoints.pop(0)
+            self.get_logger().info("Waypoint reached")
+        
+        move_in_the_middle_reward = 1 if (self.check_for_the_perfect_path(info["laser"])) else 0
+        
+        reward = progress_reward + collision_penalty + time_penalty + target_reached_reward + closest_waypoint_reached_reward + move_in_the_middle_reward
+        
         
         return observation, reward, terminated, False, info
     
@@ -109,13 +138,15 @@ class aunaEnvironment(robotController, Env):
         future = self.reset_world_client.call_async(Empty.Request())
         rclpy.spin_until_future_complete(self, future)
 
+        self.random_position = random.randint(0, 9)
+        #self.closest_waypoint_index = 0
         # Select a random start position and orientation
-        self._agent_location = np.array(random.choice(self._agent_locations), dtype=np.float32)
-        # orientation = random.choice(self.orientations)
+        self._agent_location = np.array(self._agent_locations[self.random_position], dtype=np.float32)
+        self.random_orientation = random.randint(0, 1)
+        orientation = self.orientations[self.random_position][self.random_orientation]
         # Set the robot to a new state with orientation, 
-        # must be fixed because each position has its own orientation (not always 0° or 180°)
-        # self.set_robot_state(self._agent_location, orientation)  
-        self.set_robot_state(self._agent_location)
+        self.set_robot_state(self._agent_location, orientation)  
+        
     
         # Boolean variable that waits until the set_robot_state method finishes.
         while self.robot_reset_done == False:
@@ -124,13 +155,18 @@ class aunaEnvironment(robotController, Env):
         # Sample the target's location randomly until it does not coincide with the agent's location
         self._target_location = self._agent_location
         while np.array_equal(self._target_location, self._agent_location):
-            self._target_location = np.array(random.choice(self._agent_locations), dtype=np.float32)
+            self.target_index = self._agent_locations.index(random.choice(self._agent_locations))
+            self.x = self._agent_locations[self.target_index]
+            self._target_location = np.array(self._agent_locations[self.target_index], dtype=np.float32)
 
         self.spin()
 
         # Create observation and info dictionary
         observation = self._get_obs()
-        info = self._get_info()
+        info = self._get_info(True)
+        
+        while self.info_received == False:
+            rclpy.spin_once(self)
 
         return observation, info
 
@@ -146,10 +182,26 @@ class aunaEnvironment(robotController, Env):
                 return True
         return False
 
+    def check_for_the_perfect_path(self, laser_readings):
+        #Check if any obstacles are too close based on laser readings.
+        temp = True
+        for distance in laser_readings:
+            if distance < self._best_distance_from_obstacles:
+                temp = False
+        return temp    
+
+    def check_waypoint_reached(self):
+        reached = False
+        if (calculate_distance(self.remaining_waypoints[0], self.actual_position) <= 0.1):
+            reached = True 
+        print(f"+++++++++++{self.remaining_waypoints[0]}+++++++++++++{self.actual_position}")
+        return reached 
+
     def spin(self):
         # the node will be spun untill the sensor readings are recieived 
-        self.received = False
-        while (self.received == False):
+        self.readings_received = False
+        self.odom_received = False
+        while ((self.readings_received == False) & (self.odom_received == False)):
             rclpy.spin_once(self)
 
     def create_ros_clients(self):
@@ -165,7 +217,7 @@ class aunaEnvironment(robotController, Env):
         future = self.reset_world_client.call_async(Empty.Request())
         # Add a timeout of 5 seconds
         rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)  
-
+        
         if future.done():
             if future.result() is not None:
                 self.get_logger().info('World reset successfully')
@@ -174,14 +226,14 @@ class aunaEnvironment(robotController, Env):
         else:
             self.get_logger().error('Service call reset_world did not finish before timeout')
     
-    def set_robot_state(self, position):
+    def set_robot_state(self, position, orientation):
         # Construct the request to set entity state
         req = SetEntityState.Request()
         req.state = EntityState()
         req.state.name = 'robot'  
         req.state.pose = Pose(
-            position=Point(x=float(position[0]), y=float(position[1]), z=float(position[2]))
-            #orientation=Quaternion(x=orientation[0], y=orientation[1], z=orientation[2], w=orientation[3])
+            position=Point(x=float(position[0]), y=float(position[1]), z=float(position[2])),
+            orientation=Quaternion(x=float(orientation[0]), y=float(orientation[1]), z=float(orientation[2]), w=float(orientation[3]))
         )
         req.state.twist.linear.x = float(0)
         req.state.twist.linear.y = float(0)
@@ -197,7 +249,7 @@ class aunaEnvironment(robotController, Env):
 
         if future.done():
             if future.result().success:
-                self.get_logger().info('Robot state set successfully')
+                self.get_logger().info('Robot state set successfully') 
             else:
                 self.get_logger().error('Failed to set robot state')
         else:
@@ -206,13 +258,75 @@ class aunaEnvironment(robotController, Env):
 
 
     def _get_obs(self):
-        return {"agent": self._agent_location, "target": self._target_location}
-    
-    def _get_info(self):
-        agent_location = np.array(self._agent_location)
+        # np.array([self.actual_position.x, self.actual_position.y, self.actual_position.z])
+        agent_position = np.clip(np.array([self.actual_position.x, self.actual_position.y, self.actual_position.z], dtype=np.float32), self.observation_space['agent'].low, self.observation_space['agent'].high)
+        target_position = np.clip(np.array(self._target_location, dtype=np.float32), self.observation_space['target'].low, self.observation_space['target'].high)
+        #return {"agent": np.array([self.actual_position.x, self.actual_position.y, self.actual_position.z], dtype=np.float32), "target": np.array(self._target_location, dtype=np.float32)}
+        return {"agent": agent_position, "target": target_position}
+    def _get_info(self, reset):
+        agent_location = np.array(self.actual_position)
         target_location = np.array(self._target_location)
-        distance = np.linalg.norm(agent_location - target_location)
+        distance = self.calculate_distance_to_the_target(reset)
+        
         return {"distance": distance, "laser": self.readings}
+
+    def calculate_distance(self, point1, point2):
+        #distance = np.linalg.norm(np.array(np.array(point2, dtype=np.float32)) - np.array(np.array(point1, dtype=np.float32)))
+        #print (f"{point1}*************{point2}")
+        #distance = np.linalg.norm(point2 - point1)
+        point1 = np.array([point1.x, point1.y, point1.z]) if isinstance(point1, Point) else np.array(point1)
+        point2 = np.array([point2.x, point2.y, point2.z]) if isinstance(point2, Point) else np.array(point2)
+        distance = np.linalg.norm(point2 - point1)
+        return distance
+
+    def sum_pairwise_distances(self, waypoints):
+        total_distance = 0
+        for i in range(len(waypoints) - 1):
+            total_distance += self.calculate_distance(waypoints[i], waypoints[i+1])
+        
+        return total_distance
+
+    def calculate_distance_to_the_target(self, reset):
+        if (reset):
+            if (self.random_orientation == 1):
+                agent_locations = self._agent_locations[::-1]
+                real_start_index = len(self._agent_locations) - self.random_position - 1
+                real_target_index = len(self._agent_locations) - self.target_index - 1
+                if real_start_index <= real_target_index:
+                    self.remaining_waypoints = agent_locations[real_start_index + 1:real_target_index + 1]
+                else:
+                    if (real_start_index == len(self._agent_locations) - 1):
+                        self.remaining_waypoints = agent_locations[:real_target_index + 1]
+                    else:
+                        self.remaining_waypoints = agent_locations[real_start_index + 1:] + agent_locations[:real_target_index + 1]
+            else:
+                agent_locations = self._agent_locations 
+                real_start_index = self.random_position
+                real_target_index = self.target_index
+                if real_start_index <= real_target_index:
+                    self.remaining_waypoints = agent_locations[real_start_index + 1:real_target_index + 1]
+                else:
+                    if (real_start_index == len(self._agent_locations) - 1):
+                        self.remaining_waypoints = agent_locations[:real_target_index + 1]
+                    else:
+                        self.remaining_waypoints = agent_locations[real_start_index + 1:] + agent_locations[:real_target_index + 1]
+            
+        if (len(self.remaining_waypoints) >= 2):    
+            distance_from_closest_waypoint_to_target = self.sum_pairwise_distances(self.remaining_waypoints)
+            distance_to_the_closeset_point = self.calculate_distance(self.remaining_waypoints[0], self.actual_position)
+            self.info_received = True
+            if (reset): self.original_distance_to_target = distance_to_the_closeset_point + distance_from_closest_waypoint_to_target
+            return distance_to_the_closeset_point + distance_from_closest_waypoint_to_target
+        elif (len(self.remaining_waypoints) >= 1):
+            distance_to_the_closeset_point = self.calculate_distance(self.remaining_waypoints[0], self.actual_position)
+            self.info_received = True
+            if (reset): self.original_distance_to_target = distance_to_the_closeset_point
+            return distance_to_the_closeset_point
+        else:
+            self.info_received = True
+            #self.get_logger().info("---------------------0000000000000000000-----------------------") 
+            return 0
+        
 
     def run_PPO(self):
         # checks the environment and outputs additional warnings if needed    
@@ -221,7 +335,7 @@ class aunaEnvironment(robotController, Env):
         
         model = PPO("MultiInputPolicy", self, verbose=1)
         
-        model.learn(total_timesteps=25000)
+        model.learn(total_timesteps=800000)
         print(f"learning is finished")
         
         # Enjoy trained agent, and test it 
@@ -229,7 +343,7 @@ class aunaEnvironment(robotController, Env):
         print("first reset done --------------------------------------------")
         episode_reward = 0
         true_positives = 0
-        test_episodes = 20000
+        test_episodes = 50000
         for _ in range(test_episodes):
             action, _states = model.predict(obs)
             # predict() gets the model’s action from an observation
