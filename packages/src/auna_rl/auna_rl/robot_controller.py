@@ -29,12 +29,13 @@ class robotController(Node):
     def send_vel(self, linear, angular):
         print(f"Sending velocity - Linear: {linear}, Angular: {angular}")
         msg = Twist()
-        msg.linear.x = linear
-        msg.angular.z = angular
+        msg.linear.x = float(linear)
+        msg.angular.z = float(angular)
         self.action_publisher.publish(msg)
+        self.vel_sent = True
     
     def sub_lidar_callback(self, msg: LaserScan):
-        print(f"Lidar callback triggered with {len(msg.ranges)} ranges.")
+        #print(f"Lidar callback triggered with {len(msg.ranges)} ranges.")
         # dealing with only 10 rays, which are the min of each section 
         #(the readings will be sampled to 10 sections)
         self.min_per_section = []
@@ -46,12 +47,32 @@ class robotController(Node):
             # Ensure the index does not exceed the length of readings array
             end_index = min(end_index, len(self.readings))
             self.min_per_section.append(min(self.readings[start_index:end_index]))
-        self.readings = self.min_per_section
+        
+        self.readings = np.where(np.isinf(self.min_per_section), 29, self.min_per_section)
+        print(f"readings**************{self.readings}")
         self.readings_received = True 
 
     def sub_odom_callback(self, msg):
         self.actual_position = msg.pose.pose.position
+
+        # Handle NaNs for current_velocity
+        linear_velocity = msg.twist.twist.linear.x
+        if np.isnan(linear_velocity):
+            logging.warning("NaN detected in linear_velocity, setting to 0.0")
+            self.current_velocity = 1.0  # Default safe value
+        else:
+            self.current_velocity = linear_velocity
+
+        # Handle NaNs for angular_velocity
+        angular_velocity = msg.twist.twist.angular.z
+        if np.isnan(angular_velocity):
+            logging.warning("NaN detected in angular_velocity, setting to 0.0")
+            self.angular_velocity = 0.0  # Default safe value
+        else:
+            self.angular_velocity = angular_velocity
+
         self.odom_received = True
+
 def main(args = None):
         rclpy.init()
 
