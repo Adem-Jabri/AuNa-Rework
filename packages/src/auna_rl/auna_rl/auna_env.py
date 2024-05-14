@@ -27,9 +27,9 @@ class aunaEnvironment(robotController, Env):
             (10.2, 14.6, 0.01),         # corner 3   
             (-0.68, 15.66, 0.01),       # corner 4  
             (-2.2, 12.318, 0.01),       # corner 5  
-            (4.233, 5.517, 0.01),       # Point 6 (Middle of the semicircle)  
+            #(4.233, 5.517, 0.01),       # Point 6 (Middle of the semicircle)  
             (-3, 5.3, 0.01),            # Point 7 (Start of the straight line)  
-            (-12.359, 14.657, 0.01),    # Point 8 (End of the straight line)   
+            #(-12.359, 14.657, 0.01),    # Point 8 (End of the straight line)   
             (-18.1, 13.879, 0.01),      # Point 9 (End of the second semicircle)
             (-14.657, 1.2, 0.01)        # Point 10 (Last Corner)
         ]
@@ -37,51 +37,49 @@ class aunaEnvironment(robotController, Env):
         
          # Possible orientations (x, y, z, w). For each position it will be 2 orientations 
         self.orientations = [
-            ((0, 0, 1, 0), (0, 0, 0, 1)),  
+            ((0, 0, 0, 1), (0, 0, 1, 0)),  
             ((0, 0, 1, 1.7), (0, 0, 1, -0.5)),
             ((0, 0, 1, 0.4), (0, 0, 1, -2)),
             ((0, 0, 1, 0), (0, 0, 0, 1)),
             ((0, 0, 1, -1.9), (0, 0, 1, 1)),
-            ((0, 0, 1, -0.5), (0, 0, 1, 2)),
+            #((0, 0, 1, -0.5), (0, 0, 1, 2)),
             ((0, 0, 1, 0.35), (0, 0, 1, -2.2)),
-            ((0, 0, 1, 0.35), (0, 0, 1, -2.2)),
+            #((0, 0, 1, 0.35), (0, 0, 1, -2.2)),
             ((0, 0, 1, -0.75), (0, 0, 1, 1.4)),
             ((0, 0, 1, -5), (0, 0, 1, 0.25)),
         ]
 
         self._minimum_distance_from_obstacles = 0.25
-        self._minimum_distance_from_target = 0.
+        self._minimum_distance_from_target = 0.6
         self._best_distance_from_obstacles = 0.5
         self.remaining_waypoints = []
         self.original_distance_to_target = 0
         self.info_received = False
         self.create_ros_clients()
+        self.collision_number = 0
+        self.current_velocity = 0 
+        self.last_time = self.get_clock().now().to_msg().sec
+        self.angular_velocity = 0
+        self.current_velocity = 0
+        self.vel_sent = False 
+        self.target_reached_reward = 0
 
         all_locations = np.array(self._target_locations)
         min_bounds = np.min(all_locations, axis=0) 
         max_bounds = np.max(all_locations, axis=0) + 0.001
         
-        self.action_space = spaces.Discrete(3)
-        """
-        initialize size, in the gym Doc, the size of the square grid was initialized
-
-        Observations are dictionaries with the agent's and the target's location.
-        Each location is encoded as an element of {0, ..., `size`}^2, i.e. MultiDiscrete([size, size]).
-        """
+        self.action_space = spaces.Box(low=np.array([0.5, -0.5]), high=np.array([1.0, 0.5]), dtype=np.float32)  # Continuous action space
         self.observation_space = spaces.Dict({
-            "agent": spaces.Box(low=min_bounds, high=max_bounds, shape=(3,), dtype=np.float32),
-            "target": spaces.Box(low=min_bounds, high=max_bounds, shape=(3,), dtype=np.float32),
+            "lidar_readings": spaces.Box(low=0.2, high=30, shape=(10,), dtype=np.float32),
+            "velocity": spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32),
+            "steering_angle": spaces.Box(low=-0.5, high=0.5, shape=(1,), dtype=np.float32)
         })
     
     def step(self, action):
         
         terminated = False
         
-        directions = [np.array([1, 0]), np.array([0, 1]), np.array([-1, 0])]
-        direction = directions[action]
-        linear_vel = 1.0
-        angular_vel = -0.5 if action == 0 else 0.5 if action == 2 else 0.0
-
+        linear_vel, angular_vel = action
         self.send_vel(linear_vel, angular_vel)
 
         self.spin()
@@ -94,40 +92,64 @@ class aunaEnvironment(robotController, Env):
         observation = self._get_obs()
         info = self._get_info(False)
         
+        print(f"observation:{observation}")
         while self.info_received == False:
             rclpy.spin_once(self)
 
-        #print (f"+++++++++++++++{self.x}++++++++++{self._target_location}++++++++++++++++++{self.actual_position}")
+        if (self.actual_position.z > 0.1) :
+            terminated = True
+            self.reset()
+        #print (f"++++++++++++++++++++++++++{self._target_location}++++++++++++++++++{self.actual_position}")
         #print (f"---------------{self.remaining_waypoints}-----------------------")
         #print(f"+++++++++++++++++{info}+++++++++++++++++++++")
         
-        # reward calculation
-        progress_reward = self.original_distance_to_target - info["distance"]
-        
-        collision_penalty = -50 if (self.check_obstacle_proximity(info["laser"])) else 0
-        if (collision_penalty < 0) : 
-            terminated = True
-            self.get_logger().info("The robot hits an obstacle")
-        
-        time_penalty = -0.1
+        # covered distance calculation
+        current_time = self.get_clock().now().to_msg().sec
+        time_elapsed = current_time - self.last_time
+        self.last_time = self.get_clock().now().to_msg().sec
+        #distance_covered = self.current_velocity * time_elapsed
+        #self.total_distance_covered += distance_covered
 
-        target_reached_reward = 100 if (info["distance"] < self._minimum_distance_from_target) else 0
-        if (target_reached_reward > 0) : 
+        
+
+        # reward calculation
+        collision_calculation = self.calculate_collision_reward(self.distance_to_the_closest_obstacle(info["laser"]))
+        
+            
+        #if (self.check_obstacle_proximity(info["laser"])) : 
+        #    terminated = True
+        #    collision_penalty = -50
+        #    self.get_logger().info("The robot hits an obstacle")
+
+        if (collision_calculation == -70) : 
+            terminated = True
+        
+        self.target_reached_reward = 100 if (info["distance"] < self._minimum_distance_from_target) else 0
+        if (self.target_reached_reward > 0) : 
             terminated = True
             self.get_logger().info("The target is reached")
+
+        # progress reward based on cumulative distance
+        if (collision_calculation > 0):
+            if (self.original_distance_to_target > 0):
+                progress_reward = (abs(self.original_distance_to_target - info["distance"]) / self.original_distance_to_target ) * 10
+        else: progress_reward = 0
+
+        # steering punishment to discourage excessive steering
+        steering_penalty = -abs(angular_vel) * 2
         
-        closest_waypoint_reached_reward = 10 if (self.check_waypoint_reached == True) else 0
-        if (closest_waypoint_reached_reward > 0) : 
-            if (len(self.remaining_waypoints) >= 1):
-                print (self.remaining_waypoints)
-                self.remaining_waypoints.pop(0)
-            self.get_logger().info("Waypoint reached")
+        #move_in_the_middle_reward = 1 if (self.distance_from_closest_waypoint_to_target > 0.4) else (if (self.distance_from_closest_waypoint_to_target))
+
+        # encourages speed
+        time_penalty = -1 
         
-        move_in_the_middle_reward = 1 if (self.check_for_the_perfect_path(info["laser"])) else 0
-        
-        reward = progress_reward + collision_penalty + time_penalty + target_reached_reward + closest_waypoint_reached_reward + move_in_the_middle_reward
-        
-        
+        reward = progress_reward + collision_calculation + time_penalty + self.target_reached_reward + steering_penalty
+        remain = info["distance"]
+        print(f"original: {self.original_distance_to_target}+++++++++++actual: remaining{remain}")
+        print(f"progress_rewrd : {progress_reward}+++++collision_calculation: {collision_calculation}")
+        #print(f"time elapsed : {time_elapsed}++++++++++++++++++time_penalty: {time_penalty}")
+        #print(f"steering_penalty: {steering_penalty}+++++++++")
+        #print(f"calculation: {collision_calculation}")
         return observation, reward, terminated, False, info
     
     def reset(self, seed=None, options=None):
@@ -138,11 +160,17 @@ class aunaEnvironment(robotController, Env):
         future = self.reset_world_client.call_async(Empty.Request())
         rclpy.spin_until_future_complete(self, future)
 
-        self.random_position = random.randint(0, 9)
+        self.random_position = random.choice([5, 6])
+        #self.random_position = 0
+
         #self.closest_waypoint_index = 0
         # Select a random start position and orientation
         self._agent_location = np.array(self._agent_locations[self.random_position], dtype=np.float32)
-        self.random_orientation = random.randint(0, 1)
+        # 0 for forward, 1 for backward
+        choices = [0, 1]
+        weights = [1, 2]
+        self.random_orientation = random.choices(choices, weights, k=1)[0]
+        #self.random_orientation = 1
         orientation = self.orientations[self.random_position][self.random_orientation]
         # Set the robot to a new state with orientation, 
         self.set_robot_state(self._agent_location, orientation)  
@@ -153,13 +181,23 @@ class aunaEnvironment(robotController, Env):
             rclpy.spin_once(self)
 
         # Sample the target's location randomly until it does not coincide with the agent's location
-        self._target_location = self._agent_location
-        while np.array_equal(self._target_location, self._agent_location):
-            self.target_index = self._agent_locations.index(random.choice(self._agent_locations))
-            self.x = self._agent_locations[self.target_index]
-            self._target_location = np.array(self._agent_locations[self.target_index], dtype=np.float32)
+        #self._target_location = self._agent_location
+        #while np.array_equal(self._target_location, self._agent_location):
+        #    self.target_index = self._agent_locations.index(random.choice(self._agent_locations))
+        #    self.x = self._agent_locations[self.target_index]
+        #    self._target_location = np.array(self._agent_locations[self.target_index], dtype=np.float32)
+
+        # determine the target location based on the direction, it will be the waypoint 
+        # directly after the start point.
+        if self.random_orientation == 0:  # Forward
+            self.target_index = (self.random_position + 1) % len(self._agent_locations)
+        else:  # Backward
+            self.target_index = (self.random_position - 1) % len(self._agent_locations)
+        self._target_location = np.array(self._agent_locations[self.target_index], dtype=np.float32)
 
         self.spin()
+
+        self.last_time = self.get_clock().now().to_msg().sec
 
         # Create observation and info dictionary
         observation = self._get_obs()
@@ -182,19 +220,30 @@ class aunaEnvironment(robotController, Env):
                 return True
         return False
 
-    def check_for_the_perfect_path(self, laser_readings):
+    def distance_to_the_closest_obstacle(self, laser_readings):
         #Check if any obstacles are too close based on laser readings.
-        temp = True
+        min_dist = 29
         for distance in laser_readings:
-            if distance < self._best_distance_from_obstacles:
-                temp = False
-        return temp    
+            if distance < min_dist:
+                min_dist = distance
+        return min_dist    
+
+    def calculate_collision_reward(self, distance):
+        if distance > 0.4:
+            return 5
+        elif distance > 0.3:
+            return 3
+        elif distance > 0.21:
+            return -10
+        else:
+            self.collision_number += 1
+            return -70
 
     def check_waypoint_reached(self):
         reached = False
         if (calculate_distance(self.remaining_waypoints[0], self.actual_position) <= 0.1):
             reached = True 
-        print(f"+++++++++++{self.remaining_waypoints[0]}+++++++++++++{self.actual_position}")
+        #print(f"+++++++++++{self.remaining_waypoints[0]}+++++++++++++{self.actual_position}")
         return reached 
 
     def spin(self):
@@ -258,17 +307,18 @@ class aunaEnvironment(robotController, Env):
 
 
     def _get_obs(self):
-        # np.array([self.actual_position.x, self.actual_position.y, self.actual_position.z])
-        agent_position = np.clip(np.array([self.actual_position.x, self.actual_position.y, self.actual_position.z], dtype=np.float32), self.observation_space['agent'].low, self.observation_space['agent'].high)
-        target_position = np.clip(np.array(self._target_location, dtype=np.float32), self.observation_space['target'].low, self.observation_space['target'].high)
-        #return {"agent": np.array([self.actual_position.x, self.actual_position.y, self.actual_position.z], dtype=np.float32), "target": np.array(self._target_location, dtype=np.float32)}
-        return {"agent": agent_position, "target": target_position}
+        return {
+        "lidar_readings": np.array(self.readings, dtype=np.float32), 
+        "velocity": np.array([self.current_velocity], dtype=np.float32),  
+        "steering_angle": np.array([self.angular_velocity], dtype=np.float32)  
+        }
+
     def _get_info(self, reset):
         agent_location = np.array(self.actual_position)
         target_location = np.array(self._target_location)
         distance = self.calculate_distance_to_the_target(reset)
-        
-        return {"distance": distance, "laser": self.readings}
+        done = self.target_reached_reward > 0
+        return {"distance": distance, "laser": self.readings, "done": done}
 
     def calculate_distance(self, point1, point2):
         #distance = np.linalg.norm(np.array(np.array(point2, dtype=np.float32)) - np.array(np.array(point1, dtype=np.float32)))
@@ -359,12 +409,11 @@ class aunaEnvironment(robotController, Env):
             print(f"i am in the loop*************************************************************************************")    
         acc = true_positives / test_episodes
         print(f"Accuracy: {acc*100}%")
-        model.save("ros2_auna/pubsub/auna_PPO")
+        model.save("~/AuNa-Rework/packages/src/auna_rl")
 
 def main(args = None):
         rclpy.init()
         auna = aunaEnvironment()
-        auna.run_PPO()
         rclpy.spin(auna)
         
 if __name__=="__main__": 
