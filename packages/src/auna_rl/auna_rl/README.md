@@ -5,7 +5,7 @@
    source packages/install/setup.bash
 
 3. **Run the agent**:
-To start the agent, use the command below: ros2 run auna_rl auna_env
+To start the agent, use the command below: ros2 run auna_rl trainer
 
 ## Additional Information
 
