@@ -1,6 +1,6 @@
 # Autonomous Navigation System Simulator
 ___
-You can find the implementation of the autonomous agent based on Reinforcement Learning in the [packages/src/auna_rl/auna_rl](packages/src/auna_rl/auna_rl) directory.
+You can find the implementation of the autonomous agent based on **Reinforcement Learning** in the [packages/src/auna_rl/auna_rl](packages/src/auna_rl/auna_rl) directory.
 ___
 This repository includes a complete ROS2 package for the simulation of autonomous robots. It features the simulation models, navigation algorithms and other components to run and evaluate cooperative driving scenarios. Each scenario can be extended to feature different robots, additional system components and more. The launch files are modularly built, so that each part can be configured without directly affecting the other components of the simulation.
 
