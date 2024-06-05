@@ -44,23 +44,25 @@ class PPOTrainingNode(Node):
         self.env = VecCheckNan(self.env, raise_exception=True)
 
         # Configure logger
-        self.log_dir = "./logs7/"
+        self.log_dir = "./logs18/"
         os.makedirs(self.log_dir, exist_ok=True)
         self.logger = configure(self.log_dir, ["stdout", "csv", "tensorboard"])
 
         if model_path:
             self.model = PPO.load(model_path, env=self.env)
+            self.model.learning_rate = 0.0001
+            self.model.gamma=0.6
             # Dynamically adjust learning rate and other adjustable parameters
-            self.model.learning_rate = get_schedule_fn(0.0001)  # Adjusted learning rate
-            self.model.gamma = 0.90
+            #self.model.learning_rate = get_schedule_fn(0.0001)  # Adjusted learning rate
+            #self.model.gamma = 0.50
             #self.clip_range = 0.1
-            self.ent_coef = 0.015
+            #self.ent_coef = 0.015
         else:
             # PPO model configuration
             self.model = PPO("MultiInputPolicy", self.env, verbose=1, tensorboard_log=self.log_dir,
-                            batch_size=64, n_steps=2048, n_epochs=10,
-                            learning_rate=0.001, ent_coef=0.01, clip_range=0.1,
-                            gamma=0.99, gae_lambda=0.95,
+                            batch_size=256, n_steps=4096, n_epochs=10,
+                            learning_rate=0.0001, ent_coef=0.01, clip_range=0.1,
+                            gamma=0.6, gae_lambda=0.95,
                             policy_kwargs={'net_arch': [400, 300]})
 
         if hasattr(self.env, 'render_mode'):
@@ -75,8 +77,8 @@ class PPOTrainingNode(Node):
                                     name_prefix="ppo-training")
 
         # Callbacks
-        self.checkpoint_callback = CheckpointCallback(save_freq=3000, save_path='./models7/', name_prefix='ppo_model')
-        self.eval_callback = EvalCallback(self.auna, best_model_save_path='./models7/', log_path=self.log_dir, eval_freq=3000,
+        self.checkpoint_callback = CheckpointCallback(save_freq=3000, save_path='./models18/', name_prefix='ppo_model')
+        self.eval_callback = EvalCallback(self.auna, best_model_save_path='./models18/', log_path=self.log_dir, eval_freq=3000,
                                           deterministic=True, render=False)
         self.progress_callback = ProgressCallback(check_freq=20000)
 
@@ -86,7 +88,7 @@ class PPOTrainingNode(Node):
 
     def train(self):
         # Start the training process with callbacks for saving the model, evaluation, and progress tracking
-        self.model.learn(total_timesteps=400000, callback=[self.checkpoint_callback, self.eval_callback, self.progress_callback])
+        self.model.learn(total_timesteps=20000, callback=[self.checkpoint_callback, self.eval_callback, self.progress_callback])
         self.get_logger().info("Training completed")
 
         # Test the trained agent
@@ -108,12 +110,24 @@ class PPOTrainingNode(Node):
         # Save the model and close environment
         self.model.save(os.path.expanduser("~/AuNa-Rework/packages/src/auna_rl"))
         self.get_logger().info("Model saved successfully")
-
+    def test_model(self, num_episodes=10):
+        for episode in range(num_episodes):
+            obs, info = self.auna.reset()
+            episode_rewards = 0
+            done = False
+            while not done:
+                action, _states = self.model.predict(obs, deterministic=True)
+                obs, reward, done, truncated, info = self.auna.step(action)
+                episode_rewards += reward
+                if done or truncated:
+                    break
+            self.get_logger().info(f"Episode {episode + 1}: Total Reward: {episode_rewards}")
 def main(args=None):
     rclpy.init(args=args)
-    model_path = "/home/vscode/workspace/models3/ppo_model_174000_steps.zip"
-    trainer = PPOTrainingNode()
-    trainer.start_training()
+    model_path = "/home/vscode/workspace/models17/ppo_model_18000_steps.zip"
+    trainer = PPOTrainingNode(model_path)
+    #trainer.start_training()
+    trainer.test_model(num_episodes=10)
     rclpy.spin(trainer)  # Ensure that rclpy.spin() references the correct node object
 
     #if trainer.training_thread.is_alive():
