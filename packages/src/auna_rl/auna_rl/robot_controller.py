@@ -5,6 +5,7 @@ from nav_msgs.msg import Odometry
 from rclpy.qos import qos_profile_sensor_data
 import numpy as np
 import rclpy
+import logging
 
 class robotController(Node):
     def __init__(self):
@@ -51,7 +52,7 @@ class robotController(Node):
         self.readings = np.where(np.isinf(self.min_per_section), 29, self.min_per_section)
         print(f"readings**************{self.readings}")
         self.readings_received = True 
-
+        
     def sub_odom_callback(self, msg):
         self.actual_position = msg.pose.pose.position
 
@@ -81,5 +82,4 @@ def main(args = None):
         rclpy.spin(controller)
         
 if __name__=="__main__": 
-        main()    
-
+        main()
