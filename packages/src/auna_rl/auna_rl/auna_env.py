@@ -350,7 +350,7 @@ class aunaEnvironment(robotController, Env):
             return 5
         elif distance > 0.3:
             return 3
-        elif distance >= 0.208:
+        elif distance >= 0.21:
             return -10
         else:
             self.collision_number += 1
