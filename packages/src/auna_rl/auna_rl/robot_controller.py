@@ -36,9 +36,8 @@ class robotController(Node):
         self.vel_sent = True
     
     def sub_lidar_callback(self, msg: LaserScan):
-        #print(f"Lidar callback triggered with {len(msg.ranges)} ranges.")
         # dealing with only 10 rays, which are the min of each section 
-        #(the readings will be sampled to 10 sections)
+        # the readings will be sampled to 10 sections
         self.min_per_section = []
         self.readings = np.array(msg.ranges)
         self.readings_per_section = len(self.readings) // self.num_lidar_sections
