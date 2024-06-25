@@ -7,11 +7,9 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, EvalCallback
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.logger import configure
-from stable_baselines3.common.vec_env import DummyVecEnv, VecCheckNan, VecVideoRecorder
-from stable_baselines3.common.utils import get_schedule_fn
+from stable_baselines3.common.vec_env import DummyVecEnv, VecCheckNan
 from auna_rl.auna_env import aunaEnvironment
 import threading
-import logging
 
 # Custom callback for progress tracking
 class ProgressCallback(BaseCallback):
@@ -52,11 +50,6 @@ class PPOTrainingNode(Node):
             self.model = PPO.load(model_path, env=self.env)
             self.model.learning_rate = 0.0001
             self.model.gamma=0.6
-            # Dynamically adjust learning rate and other adjustable parameters
-            #self.model.learning_rate = get_schedule_fn(0.0001)  # Adjusted learning rate
-            #self.model.gamma = 0.50
-            #self.clip_range = 0.1
-            #self.ent_coef = 0.015
         else:
             # PPO model configuration
             self.model = PPO("MultiInputPolicy", self.env, verbose=1, tensorboard_log=self.log_dir,
@@ -64,17 +57,6 @@ class PPOTrainingNode(Node):
                             learning_rate=0.0001, ent_coef=0.01, clip_range=0.1,
                             gamma=0.6, gae_lambda=0.95,
                             policy_kwargs={'net_arch': [400, 300]})
-
-        if hasattr(self.env, 'render_mode'):
-            self.env.render_mode = 'rgb_array'
-        else:
-            raise NotImplementedError("Environment must support rgb_array rendering for video recording.")
-    
-        # Video recording setup
-        self.env = VecVideoRecorder(self.env, "./videos/",
-                                    record_video_trigger=lambda step: step % 15000 == 0,
-                                    video_length=1200*50,  # 20 minutes of recording at 50 FPS
-                                    name_prefix="ppo-training")
 
         # Callbacks
         self.checkpoint_callback = CheckpointCallback(save_freq=3000, save_path='./models18/', name_prefix='ppo_model')
@@ -90,26 +72,11 @@ class PPOTrainingNode(Node):
         # Start the training process with callbacks for saving the model, evaluation, and progress tracking
         self.model.learn(total_timesteps=20000, callback=[self.checkpoint_callback, self.eval_callback, self.progress_callback])
         self.get_logger().info("Training completed")
-
-        # Test the trained agent
-        #obs, info = self.auna.reset()
-        #episode_rewards = []
-        #true_positives = 0
-        #test_episodes = 5000
-        #for _ in range(test_episodes):
-        #    action, _states = self.model.predict(obs, deterministic=True)
-        #    obs, reward, done, truncated, info = self.auna.step(action)
-        #    episode_rewards.append(reward)
-        #    if info["done"]:
-        #        true_positives += 1
-        #        obs, info = self.auna.reset()
-
-        #accuracy = true_positives / test_episodes
-        #self.get_logger().info(f"Test Accuracy: {accuracy*100:.2f}%")
-
+        
         # Save the model and close environment
         self.model.save(os.path.expanduser("~/AuNa-Rework/packages/src/auna_rl"))
         self.get_logger().info("Model saved successfully")
+    
     def test_model(self, num_episodes=10):
         for episode in range(num_episodes):
             obs, info = self.auna.reset()
@@ -122,16 +89,15 @@ class PPOTrainingNode(Node):
                 if done or truncated:
                     break
             self.get_logger().info(f"Episode {episode + 1}: Total Reward: {episode_rewards}")
+
 def main(args=None):
     rclpy.init(args=args)
     model_path = "/home/vscode/workspace/models17/ppo_model_18000_steps.zip"
     trainer = PPOTrainingNode(model_path)
+    
     #trainer.start_training()
     trainer.test_model(num_episodes=10)
     rclpy.spin(trainer)  # Ensure that rclpy.spin() references the correct node object
-
-    #if trainer.training_thread.is_alive():
-    #    trainer.training_thread.join()
 
     trainer.destroy_node()
     rclpy.shutdown()
