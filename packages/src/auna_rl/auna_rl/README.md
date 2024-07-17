@@ -14,5 +14,5 @@ To start the agent, use the following command: ros2 run auna_rl trainer
 
 ## Additional Information
 
-For more details about the objective, methodology, challenges, solutions and results of this project, refer to the autonomous_racing_using_reinforcement_learning.pdf file in this directory.
+For more details about the objective, methodology, challenges, solutions and the results of this project, refer to the autonomous_racing_using_reinforcement_learning.pdf file in this directory.
 
