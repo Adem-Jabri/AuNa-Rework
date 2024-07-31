@@ -1,4 +1,4 @@
-## Additional Information
+## Details about the project
 
 For more details about the objective, methodology, challenges, solutions and the results of this project, refer to the autonomous_racing_using_reinforcement_learning.pdf file in this directory.
 
